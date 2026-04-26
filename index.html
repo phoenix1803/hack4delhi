@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NAGRIK AQUA</title>
+    <link rel="icon" href="nagrik-aqua/app/favicon.ico" type="image/x-icon">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        .info {
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            position: absolute;
+            top: 10px;
+            left: 50px;
+            z-index: 400;
+            max-width: 300px;
+        }
+
+        .info h2 {
+            margin-bottom: 10px;
+            color: #333;
+            font-size: 16px;
+        }
+
+        .legend {
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            z-index: 400;
+            font-size: 12px;
+        }
+
+        .legend-item {
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            margin-right: 8px;
+            border: 2px solid #333;
+        }
+
+        .drain-color {
+            background: rgba(0, 102, 204, 0.5);
+            border-color: #0066cc !important;
+        }
+
+        .road-color {
+            background: rgba(255, 51, 51, 0.5);
+            border-color: #ff3333 !important;
+        }
+
+        .waterlogging-color {
+            background: rgba(230, 126, 34, 0.5);
+            border-color: #E67E22 !important;
+        }
+
+        .toggle-btn {
+            padding: 10px 15px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+            width: 100%;
+            font-size: 12px;
+            transition: background 0.3s;
+        }
+
+        .toggle-btn:hover {
+            background: #0056b3;
+        }
+
+        .toggle-btn.waterlogging-btn {
+            background: #E67E22;
+        }
+
+        .toggle-btn.waterlogging-btn:hover {
+            background: #D35400;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 500;
+            background: white;
+            padding: 30px 50px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            display: none;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>Loading map data...</p>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="info">
+        <h2>Delhi Infrastructure</h2>
+        <p>Interactive map showing drains, roads, and waterlogging zones in Delhi.</p>
+        <div id="stats" style="margin-top: 10px; font-size: 12px; color: #666;">
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-color drain-color"></div>
+            <span>Water Drains</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color road-color"></div>
+            <span>Roads</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color waterlogging-color"></div>
+            <span>Waterlogging Zones</span>
+        </div>
+        <button class="toggle-btn" onclick="toggleLayer('drains')">Hide Drains</button>
+        <button class="toggle-btn" onclick="toggleLayer('roads')">Show Roads</button>
+        <button class="toggle-btn waterlogging-btn" onclick="toggleLayer('waterlogging')">Hide Waterlogging</button>
+    </div>
+
+    <script>
+        // Initialize map
+        const map = L.map('map').setView([28.6139, 77.2090], 11);
+
+        // Add base layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19,
+            minZoom: 10
+        }).addTo(map);
+
+        // Layer groups
+        const drainLayer = L.featureGroup();
+        const roadLayer = L.featureGroup();
+        const waterloggingLayer = L.featureGroup();
+
+        let drainFeatures = 0;
+        let roadFeatures = 0;
+        let waterloggingFeatures = 0;
+
+        // Load and display drains
+        function loadDrains() {
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+            loading.querySelector('p').textContent = 'Loading drains...';
+
+            fetch('./drains_data.json')
+                .then(response => response.json())
+                .then(data => displayDrains(data))
+                .catch(err => {
+                    console.log('Error loading drains:', err);
+                    loadRoads();
+                });
+        }
+
+        function displayDrains(data) {
+            const drainStyle = {
+                color: '#0066cc',
+                weight: 2,
+                opacity: 0.7,
+                fillColor: '#0066cc',
+                fillOpacity: 0.3
+            };
+
+            const drainGeoJson = L.geoJSON(data, {
+                style: drainStyle,
+                onEachFeature: (feature, layer) => {
+                    const props = feature.properties || {};
+                    let popupText = '<div style="font-size: 12px;">';
+                    if (props.waterway) popupText += `<b>Waterway:</b> ${props.waterway}<br>`;
+                    if (props.natural) popupText += `<b>Natural:</b> ${props.natural}<br>`;
+                    popupText += '</div>';
+                    layer.bindPopup(popupText);
+                }
+            });
+
+            drainGeoJson.addTo(drainLayer);
+            drainFeatures = data.features ? data.features.length : 0;
+            loadRoads();
+        }
+
+        // Load and display roads
+        function loadRoads() {
+            document.getElementById('loading').querySelector('p').textContent = 'Loading roads...';
+
+            fetch('./roads_data.json')
+                .then(response => response.json())
+                .then(data => displayRoads(data))
+                .catch(err => {
+                    console.log('Error loading roads:', err);
+                    loadWaterlogging();
+                });
+        }
+
+        function displayRoads(data) {
+            const roadStyle = {
+                color: '#ff3333',
+                weight: 2,
+                opacity: 0.7,
+                fillColor: '#ff3333',
+                fillOpacity: 0.3
+            };
+
+            const roadGeoJson = L.geoJSON(data, {
+                style: roadStyle,
+                onEachFeature: (feature, layer) => {
+                    const props = feature.properties || {};
+                    let popupText = '<div style="font-size: 12px;">';
+                    if (props.highway) popupText += `<b>Highway:</b> ${props.highway}<br>`;
+                    if (props.name) popupText += `<b>Name:</b> ${props.name}<br>`;
+                    popupText += '</div>';
+                    layer.bindPopup(popupText);
+                }
+            });
+
+            roadGeoJson.addTo(roadLayer);
+            roadFeatures = data.features ? data.features.length : 0;
+            loadWaterlogging();
+        }
+
+        // Load and display waterlogging
+        function loadWaterlogging() {
+            document.getElementById('loading').querySelector('p').textContent = 'Loading waterlogging zones...';
+
+            fetch('./waterlogging_data.json')
+                .then(response => response.json())
+                .then(data => displayWaterlogging(data))
+                .catch(err => {
+                    console.log('Error loading waterlogging:', err);
+                    finishLoading();
+                });
+        }
+
+        function displayWaterlogging(data) {
+            const waterloggingGeoJson = L.geoJSON(data, {
+                style: (feature) => {
+                    const c = (feature.properties && feature.properties.fillColor) || '#E67E22';
+                    return {
+                        color: c,
+                        weight: 2,
+                        opacity: 0.8,
+                        fillColor: c,
+                        fillOpacity: 0.4
+                    };
+                },
+                onEachFeature: (feature, layer) => {
+                    const props = feature.properties || {};
+                    const freq = props.frequency != null ? props.frequency : 'N/A';
+                    const color = (props.fillColor || '#E67E22').toUpperCase();
+                    let priority = 'Medium';
+                    if (color === '#E74C3C') priority = 'High';
+                    else if (color === '#F1C40F') priority = 'Medium';
+                    else if (color === '#2ECC71') priority = 'Low';
+                    const html = `<div style="font-size: 12px;">
+                        <b>Waterlogging Zone</b><br>
+                        <b>Frequency:</b> ${freq}<br>
+                        <b>Priority:</b> ${priority}
+                    </div>`;
+                    layer.bindPopup(html);
+                    layer.bindTooltip(`Waterlogging: ${priority} (freq: ${freq})`, { sticky: true });
+                }
+            });
+
+            waterloggingGeoJson.addTo(waterloggingLayer);
+            waterloggingFeatures = data.features ? data.features.length : 0;
+            finishLoading();
+        }
+
+        function finishLoading() {
+            // Add layers to map
+            drainLayer.addTo(map);
+            // Show waterlogging by default; roads remain hidden
+            waterloggingLayer.addTo(map);
+
+            // Update stats
+            document.getElementById('stats').innerHTML = `
+                <p><b>Drains:</b> ${drainFeatures.toLocaleString()} features</p>
+                <p><b>Roads:</b> ${roadFeatures.toLocaleString()} features</p>
+                <p><b>Waterlogging:</b> ${waterloggingFeatures.toLocaleString()} zones</p>
+                <p><b>Total:</b> ${(drainFeatures + roadFeatures + waterloggingFeatures).toLocaleString()} features</p>
+            `;
+
+            // Hide loading
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        // Toggle layer visibility
+        function toggleLayer(type) {
+            const btn = event.target;
+            if (type === 'drains') {
+                if (map.hasLayer(drainLayer)) {
+                    map.removeLayer(drainLayer);
+                    btn.textContent = 'Show Drains';
+                } else {
+                    drainLayer.addTo(map);
+                    btn.textContent = 'Hide Drains';
+                }
+            } else if (type === 'roads') {
+                if (map.hasLayer(roadLayer)) {
+                    map.removeLayer(roadLayer);
+                    btn.textContent = 'Show Roads';
+                } else {
+                    roadLayer.addTo(map);
+                    btn.textContent = 'Hide Roads';
+                }
+            } else if (type === 'waterlogging') {
+                if (map.hasLayer(waterloggingLayer)) {
+                    map.removeLayer(waterloggingLayer);
+                    btn.textContent = 'Show Waterlogging';
+                } else {
+                    waterloggingLayer.addTo(map);
+                    btn.textContent = 'Hide Waterlogging';
+                }
+            }
+        }
+
+        // Start loading data
+        window.addEventListener('load', loadDrains);
+    </script>
+</body>
+
+</html>
